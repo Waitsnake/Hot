@@ -72,25 +72,61 @@
 #import <IOKit/hidsystem/IOHIDEventSystemClient.h>
 #import <IOKit/hidsystem/IOHIDServiceClient.h>
 
+#define IOHIDEventFieldBaseTemperature IOHIDEventTypeTemperature << 16
+
 static IOHIDEventSystemClientRef client = nil;
+static NSMutableArray * services = nil;
 
 NSDictionary< NSString *, NSNumber * > * ReadM1Sensors( void )
 {
     if( client == nil )
     {
         client = IOHIDEventSystemClientCreate( kCFAllocatorDefault );
+        NSCAssert(client != nil, @"NSCAssert: client was nil.");
         
         NSDictionary * filter =
         @{
             @"PrimaryUsagePage" : [ NSNumber numberWithLongLong: IOHIDPageAppleVendor ],
             @"PrimaryUsage"     : [ NSNumber numberWithLongLong: IOHIDUsageAppleVendorTemperatureSensor ]
         };
+        NSCAssert(filter != nil, @"NSCAssert: filter was nil.");
         
         IOHIDEventSystemClientSetMatching( client, ( __bridge CFDictionaryRef )filter );
+        
+        NSArray                                       * servicesArr = CFBridgingRelease( IOHIDEventSystemClientCopyServices( client ) );
+        NSCAssert(servicesArr != nil, @"NSCAssert: servicesArr was nil.");
+        
+        // pre-filter the sensor list and only add sensors that contains "ACC" in name (like pACC and eACC that are the CPU cores)
+        for( id o in servicesArr )
+        {
+            IOHIDServiceClientRef service = ( __bridge IOHIDServiceClientRef )o;
+            NSString            * name    = CFBridgingRelease( IOHIDServiceClientCopyProperty( service, CFSTR( "Product" ) ) );
+            CFTypeRef             event   = IOHIDServiceClientCopyEvent( service, IOHIDEventTypeTemperature, 0, 0 );
+            
+            if( name != nil && event != nil )
+            {
+
+                NSRange isRange = [name rangeOfString:@"ACC" options:NSCaseInsensitiveSearch];
+                if (isRange.location != NSNotFound)
+                {
+                    if (services == nil)
+                    {
+                        services = [[NSMutableArray alloc] init];
+                        NSCAssert(services != nil, @"NSCAssert: services was nil.");
+                    }
+                    [services addObject:o];
+                }
+            }
+            
+            if( event != nil )
+            {
+                CFRelease( event );
+            }
+        }
     }
     
-    NSArray                                       * services = CFBridgingRelease( IOHIDEventSystemClientCopyServices( client ) );
     NSMutableDictionary< NSString *, NSNumber * > * values   = [ NSMutableDictionary new ];
+    NSCAssert(values != nil, @"NSCAssert: values was nil.");
     
     for( id o in services )
     {
@@ -100,7 +136,7 @@ NSDictionary< NSString *, NSNumber * > * ReadM1Sensors( void )
         
         if( name != nil && event != nil )
         {
-            values[ name ] = [ NSNumber numberWithDouble: IOHIDEventGetFloatValue( event, 0x000F0000 ) ];
+            values[ name ] = [ NSNumber numberWithDouble: IOHIDEventGetFloatValue( event, IOHIDEventFieldBaseTemperature ) ];
         }
         
         if( event != nil )
